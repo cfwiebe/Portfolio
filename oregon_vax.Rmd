@@ -1,0 +1,145 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+## COUNTY LEVEL DATA
+county<-read.csv("https://raw.githubusercontent.com/kitadasmalley/Teaching/refs/heads/main/ProjectData/countyImmRate.csv" )
+## VACCINE DATA FOR PRESCHOOLS
+ps <-
+read.csv("https://raw.githubusercontent.com/kitadasmalley/Teaching/refs/heads/main/ProjectData/Preschool%20_%20Child%20Care.csv" )
+## NEEDS TO BE NUMERIC
+ps$Per_Vac_AllVac<-as.numeric(ps$Per_Vac_AllVac)
+
+```
+
+```{r}
+#install.packages("tools")
+library(tools)
+library(tidyverse)
+library(dplyr)
+library(maps)
+library(colorspace)
+library(ggplot2)
+
+or_counties <- map_data("county", "oregon") %>% 
+  dplyr::select(lon = long, lat, group, id = subregion)
+
+head(or_counties)
+```
+
+```{r}
+or_counties$County <- toTitleCase(or_counties$id)
+
+or_vax <- left_join(county,or_counties, by = "County")
+
+str(ps)
+```
+
+```{r}
+# This code creates the vaccination categories for counties
+or_vax$vaccination_category <- cut(or_vax$All.vaccines,
+                                    breaks = c(0, 70, 75, 80, 100), 
+                                    labels = c("0-70", ">70-75", ">75-80", ">80-100"),
+                                    right = TRUE)
+# Ensures that the new variable is a factor
+or_vax$vaccination_category <- factor(or_vax$vaccination_category, 
+                                       levels = c("0-70", ">70-75", ">75-80", ">80-100"))
+
+# Creates the categories for the individual points
+ps$vaccination_category_points <- cut(ps$Per_Vac_AllVac,
+                                       breaks = c(0, 85, 90, 95, 100), 
+                                       labels = c("Most vulnerable (less than 85.0% of \n students fully vaccinated)", 
+                                                  "More vulnerable (85-89.9% of students \n fully vaccinated)", 
+                                                  "Moderately vulnerable (90-94.9% of \n students fully vaccinated)", 
+                                                  "Safest (95-100% of students fully \n vaccinated)"),
+                                       right = TRUE)
+
+
+# Ensures that the new points variable is a factor
+ps$vaccination_category_points <- factor(ps$vaccination_category_points, 
+                                          levels = c("Most vulnerable (less than 85.0% of \n students fully vaccinated)", 
+                                                     "More vulnerable (85-89.9% of students \n fully vaccinated)", 
+                                                     "Moderately vulnerable (90-94.9% of \n students fully vaccinated)", 
+                                                     "Safest (95-100% of students fully \n vaccinated)"))
+
+# Removes NA values
+ps <- ps %>%
+  filter(!is.na(vaccination_category_points))
+
+
+# Orders the points correctly so that red ones are on top
+ps <- ps[order(ps$Per_Vac_AllVac, decreasing = TRUE), ]
+
+
+ggplot() + geom_polygon(data = or_vax, aes(x = lon, y = lat, group = group, fill = vaccination_category),
+               colour = "grey50") +
+  # Adds points
+  geom_point(data = ps, aes(x = x, y = y, color = vaccination_category_points), size = 1.5) +
+  
+  # Sets the colors for the counties' fill
+  scale_fill_manual(values = c("0-70" = "#c8dbe6",  
+                               ">70-75" = "#7ba8b5",  
+                               ">75-80" = "#537b94",  
+                               ">80-100" = "#3a527a")) +
+  # Sets the colors for points
+  scale_color_manual(values = c("Most vulnerable (less than 85.0% of \n students fully vaccinated)" = "#ad4e3b", 
+                                "More vulnerable (85-89.9% of students \n fully vaccinated)" = "#cc9a68",  
+                                "Moderately vulnerable (90-94.9% of \n students fully vaccinated)" = "#d9b796",  
+                                "Safest (95-100% of students fully \n vaccinated)" = "#f5efda")) +
+  # Customizes titles and caption
+  labs(title = "2023-2024 Oregon Child Care Vaccination Rates",
+       fill = "County Immunization Rates: \n % with all vaccines",
+       color = "Preschool / Child Care \n % with all vaccines required",
+       caption = "Data from Oregon.gov") +
+  theme_minimal() +
+  # Removes axes
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) + 
+  # Removes gridlines
+  theme(panel.grid = element_blank()) + 
+  # Ensures the legends are ordered correctly
+  guides(color = guide_legend(reverse = TRUE, order = 1)) +
+  guides(fill = guide_legend(reverse = TRUE, order = 2)) + 
+  # Bolds the legend titles and title
+  theme(legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold"),
+        legend.position = "left")  # Moves legends to the left side
+
+```
+
+```{r}
+# Finds vaccination rate for each county
+avg_vax_counties <- or_vax %>%
+  group_by(County) %>%
+  summarize(avg_vax_rate = mean(All.vaccines, na.rm = TRUE)) %>%
+  ungroup() 
+
+# Finds statewide average vaccination rate
+or_vax$avg_vax <- mean(avg_vax_counties$avg_vax_rate, na.rm = TRUE)
+
+ggplot() + 
+  geom_polygon(data = or_vax, aes(x = lon, y = lat, group = group, fill = All.vaccines - avg_vax), 
+               colour = "grey50") + 
+  # Customizes titles and caption
+  labs(title = "2023-2024 Oregon Child Care Vaccination Rates",
+       subtitle= "Grant County sticks out like a sore thumb, pulling the rest of the data with it",
+       fill = "Difference from Statewide \n Vaccination Rate",
+       caption = "Data from Oregon.gov") +
+  theme_minimal() + 
+  # Removes axes
+  theme(axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) + 
+  # Removes gridlines
+  theme(panel.grid = element_blank()) + 
+  # Bolds the legend titles and title
+  theme(legend.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold"),
+        legend.position = "left") +  # Moves legends to the left side
+  # Adds diverging color scale: red for negative (below average) and green for positive (above average)
+  scale_fill_gradient2(low = "red", mid = "white", high = "green", midpoint = 0)
+
+```
