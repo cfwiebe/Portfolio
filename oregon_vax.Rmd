@@ -5,10 +5,9 @@ output:
 ---
 ```{r}
 ## COUNTY LEVEL DATA
-county<-read.csv("https://raw.githubusercontent.com/kitadasmalley/Teaching/refs/heads/main/ProjectData/countyImmRate.csv" )
+county<-read.csv("https://raw.githubusercontent.com/cfwiebe/datasets/refs/heads/main/countyImmRate.csv" )
 ## VACCINE DATA FOR PRESCHOOLS
-ps <-
-read.csv("https://raw.githubusercontent.com/kitadasmalley/Teaching/refs/heads/main/ProjectData/Preschool%20_%20Child%20Care.csv" )
+ps <- read.csv("https://raw.githubusercontent.com/cfwiebe/datasets/refs/heads/main/Preschool%20_%20Child%20Care.csv" )
 ## NEEDS TO BE NUMERIC
 ps$Per_Vac_AllVac<-as.numeric(ps$Per_Vac_AllVac)
 
