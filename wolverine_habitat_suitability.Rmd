@@ -1,0 +1,302 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+```{r}
+#install.packages("sf")
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(raster)
+
+# QQLL grid, which Montana uses for animal observation data
+qqll <- "https://raw.githubusercontent.com/cfwiebe/datasets/refs/heads/main/doc.kml"
+qqll <- st_read(qqll)
+
+
+wolverine_obs_raw <- read.csv("https://raw.githubusercontent.com/cfwiebe/datasets/refs/heads/main/wolverine_obs_raw.csv")
+# Each row corresponds to a wolverine sighting in Montana, the value is which QQLL cell it was observed in.
+str(wolverine_obs_raw)
+
+# Creates new dataset: wolverine observations per QQLL cell
+obs_qqll <- wolverine_obs_raw %>%
+  group_by(obs) %>%
+  summarise(count = n())
+
+# Adds observations to QQLL kml data
+colnames(obs_qqll) <- c("qqll", "obs")
+colnames(qqll) <- c("qqll", "Description", "geometry")
+
+qqll_with_obs <- qqll %>%
+  left_join(obs_qqll, by = "qqll")
+
+qqll_with_obs$obs[is.na(qqll_with_obs$obs)] <- 0
+```
+This first graph shows wolverine observations in Montana, by QQLL cell. I used a logarithmic scale so that cells with some, but not many wolverine sightings can still be shown. I will later use this observational data to model how different climatic variables affect wolverine habitat. I will likely model these variables against a binary or Boolean variable representing wolverine observations, rather than the observational data that's represented in this graph; areas that are more populated by humans are more likely to have wolverine observations, so using a variable that states simply whether or not wolverines have been observed in that area in the past will do a better job of representing whether the habitat is suitable to wolverines or not.
+```{r}
+library(tidyverse)
+#install.packages("colorspace")
+library(colorspace)
+
+# Preps for using a logarithmic scale, ensures that cells with 0 observations are still represented
+qqll_with_obs_plus1 <- qqll_with_obs
+qqll_with_obs_plus1$obs_plus1 <- qqll_with_obs_plus1$obs + 1
+
+ggplot(qqll_with_obs_plus1) +
+  geom_sf(aes(fill=obs_plus1))+
+  scale_fill_continuous_sequential("Greens 3", trans="log")+
+  theme_minimal()+
+  labs(title="Wolverine Presence in Montana", subtitle="Populations are most common along Montana's mountain ranges", x= "Longitude", y="Latitude", fill="Observations", caption="Data courtesy of MTNHP")
+
+```
+```{r}
+montana_data <- "/Users/charliewiebe/Downloads/montana_final.csv"
+montana_data <- read.csv(montana_data)
+
+# I used binary code to represent land cover in the dataset. A 1 for a land cover type means that that type is found within the QQLL. Contrarily, a 0 means that that land cover type is absent from the QQLL. temp and inches are the average annual temperature, and average annual precipitation in inches for each QQLL. This data is originally from MTNHP, I intersected the climate/landcover data with the QQLL cells in QGIS, and tidied the dataset in SQL.
+montana_data <- montana_data[, !(names(montana_data) %in% c("obs", "obs_binary"))]
+str(montana_data)
+
+montana_final <- qqll_with_obs %>%
+  left_join(montana_data, by = "qqll")
+
+# Creates a column that simply says whether or not wolverines have been observed in that QQLL historically
+montana_final$obs_binary <- ifelse(montana_final$obs > 0, 1, 0)
+
+str(montana_final)
+
+montana_final$obs_binary <- factor(montana_final$obs_binary, levels = c(0, 1))
+
+ggplot(montana_final) + 
+  geom_sf(aes(fill = obs_binary)) +  
+  scale_fill_manual(values = c("0" = "#ebedeb", "1" = "#13941e"), 
+                    labels = c("No", "Yes")) + 
+  theme_minimal() + 
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  ) + 
+  labs(
+    title = "Ideal Wolverine Habitat in Montana", 
+    subtitle = "QQLL Cells Where Wolverines Have Been Observed", 
+    fill = "Observations?", 
+    caption = "Data courtesy of MTNHP"
+  )
+```
+This next graph shows where ice and snow can be found year-round in Montana using QQLL cells. I included this graph because, when comparing it to the map of wolverine observations, it's very easy to detect a pattern. As expected, wolverines are more common in snowy/icy areas. When I model these variables later on, I expect that I will see a very strong relationship between whether a QQLL cell contains perennial ice/snow and whether wolverines have been observed there before.
+```{r}
+
+montana_final$perennial_icesnow <- as.factor(montana_final$perennial_icesnow)
+
+ggplot(montana_final) +
+  geom_sf(aes(fill=perennial_icesnow))+
+  theme_minimal()+
+  labs(title="Perennial Ice and Snow in Montana", x= "Longitude", y="Latitude", fill="", caption="Data courtesy of MTNHP, USDA")+
+  scale_fill_manual(values = c("1" = "lightblue","0" = "forestgreen"),
+                    labels = c("1" = "Ice/Snow Can Be Found Year-Round", "0" = "No Perennial Ice/Snow"))
+```
+These two plots show the average annual temperature in Montana by QQLL cell, and the average annual precipitation in Montana by QQLL cell. These are important variables for my project because they both likely have a significant impact on whether a certain location is suitable for wolverines. Interestingly, it seems as though there is a bit of a pattern between the two plots: temperature and rainfall seem to have an inverse relationship in Montana.
+```{r}
+
+ggplot(montana_final) +
+  geom_sf(aes(fill=temp))+
+  theme_minimal()+
+  labs(title="Average Annual Temperature in Montana, by QQLL Cell", x= "Longitude", y="Latitude", fill="Temperature (°F)", caption="Data courtesy of MTNHP, USDA")+
+  scale_fill_continuous_sequential("Heat")
+
+ggplot(montana_final) +
+  geom_sf(aes(fill=inches))+
+  theme_minimal()+
+  labs(title="Average Annual Rainfall in Montana, by QQLL Cell", x= "Longitude", y="Latitude", fill="Precipitation (Inches)", caption="Data courtesy of MTNHP, USDA")+
+  scale_fill_continuous_sequential("Blues 3")
+```
+I made this next graph to see if there was more of a bell curve to the distributions of temperature and precipitation in QQLL cells that contain wolverine observations compared to the overall distributions. This would suggest that wolverines have "ideal" temperature and precipitation values, rather than simply preferring colder temperatures/more precipitation. As you can see, the distributions of QQLL cells with wolverine observations do more closely resemble bell curves. Because of this, I have found the "ideal" temperature and precipitation values for wolverines, and have assigned each cell variables for their deviations from these ideal values. Obviously, the relationship between temperature, precipitation, and wolverine habitat is a lot more nuanced than this, but I'm somewhat limited by the abilities of QGIS' raster calculator, so this is what seemed to make the most sense to me.
+```{r}
+#install.packages("gridExtra")
+library(gridExtra)
+
+
+obs_temp <- ggplot(filter(montana_final,obs>0), aes(x=temp)) + 
+  geom_histogram(binwidth=1, fill="#e36673")+
+  labs(x="Temperature (Fahrenheit)", y="Count", title="QQLL Cells Containing Wolverines")
+
+obs_prec <- ggplot(filter(montana_final,obs>0), aes(x=inches)) + 
+  geom_histogram(binwidth=1, fill="#28467d")+
+  labs(x="Precipitation (inches)", y="Count", title="QQLL Cells Containing Wolverines")
+
+all_temp <- ggplot(montana_final, aes(x=temp)) + 
+  geom_histogram(binwidth=1, fill="#e36673")+
+  labs(x="Temperature (Fahrenheit)", y="Count", title="All QQLL Cells")
+
+all_prec <- ggplot(montana_final, aes(x=inches)) + 
+  geom_histogram(binwidth=1, fill="#28467d")+
+  labs(x="Precipitation (inches)", y="Count", title="All QQLL Cells")
+
+grid.arrange(obs_temp, obs_prec, all_temp, all_prec, ncol = 2,
+             top = "Do Wolverines Prefer Specific Weather?",
+             bottom = "Data courtesy of MTNHP, USDA")
+
+# Finds "ideal" temperature and precipitation values for wolverine habitat
+montana_final$ideal_temp <- median(filter(montana_final, obs > 0)$temp)
+montana_final$ideal_prec <- median(filter(montana_final, obs > 0)$inches)
+# Finds each qqll's deviation from the ideal temperature and precipitation values
+montana_final$temp_dif <- abs(montana_final$temp-montana_final$ideal_temp)
+montana_final$prec_dif <- abs(montana_final$inches-montana_final$ideal_prec)
+
+```
+I made this next plot to explore the relationship between temperature and precipitation, and how these variables interact to affect the likelihood of observing a wolverine. As expected, there is a negative relationship between temperature and rainfall. It appears as though wolverines prefer colder temperatures and rainier weather. We will see how true this is once I model these variables, along with landcover type.
+```{r}
+
+ggplot(montana_final, aes(temp, inches, color = factor(obs_binary))) +
+  geom_point(data = subset(montana_final, obs_binary == 0), alpha = 0.75, color = "black") +
+  geom_point(data = subset(montana_final, obs_binary == 1), alpha = 0.75, color = "forestgreen") +
+  labs(title = "Fans of the Cold", 
+       subtitle = "Wolverines appear to prefer colder, rainier weather", 
+       x = "Temperature (Fahrenheit)", 
+       y = "Precipitation (Inches)", 
+       caption = "Data courtesy of MTNHP, USDA") +
+  scale_color_manual(values = c("0" = "black", "1" = "forestgreen"),
+                     labels = c("No", "Yes"),
+                     name = "Wolverines?")
+
+  
+```
+```{r}
+# Modeling
+
+montana_final$obs_binary <- as.numeric(montana_final$obs_binary)
+montana_final$perennial_icesnow <- as.numeric(montana_final$perennial_icesnow)
+ice_mod <- lm(obs_binary ~ perennial_icesnow + temp_dif + prec_dif, montana_final)
+summary(ice_mod)
+
+montana_final$barren <- as.numeric(montana_final$barren)
+barren_mod <- lm(obs_binary ~ barren + temp_dif + prec_dif, montana_final)
+summary(barren_mod)
+
+montana_final$deciduous <- as.numeric(montana_final$deciduous)
+deciduous_mod <- lm(obs_binary ~ deciduous + temp_dif + prec_dif, montana_final)
+summary(deciduous_mod)
+
+montana_final$evergreen <- as.numeric(montana_final$evergreen)
+evergreen_mod <- lm(obs_binary ~ evergreen + temp_dif + prec_dif, montana_final)
+summary(evergreen_mod)
+
+montana_final$mixed <- as.numeric(montana_final$mixed)
+mixed_mod <- lm(obs_binary ~ mixed + temp_dif + prec_dif, montana_final)
+summary(mixed_mod)
+
+montana_final$pasture <- as.numeric(montana_final$pasture)
+pasture_mod <- lm(obs_binary ~ pasture + temp_dif + prec_dif, montana_final)
+summary(pasture_mod)
+
+montana_final$cultivated <- as.numeric(montana_final$cultivated)
+cultivated_mod <- lm(obs_binary ~ cultivated + temp_dif + prec_dif, montana_final)
+summary(cultivated_mod)
+
+montana_final$woody <- as.numeric(montana_final$woody)
+woody_mod <- lm(obs_binary ~ woody + temp_dif + prec_dif, montana_final)
+summary(woody_mod)
+
+
+# Raster operations were completed in QGIS
+```
+
+```{r}
+# Raster calculations, applying the models onto Oregon's climatic and spatial variables was completed in QGIS, and partially in arcGIS. The .tif file seen below is a raster file and the output from QGIS. The file itself is too large to be uploaded to github, as well as third-party apps, so I've uploaded the final habitat suitability map to this repository as a separate .png file.
+oregon_wolverine_suitability <- raster("/Users/charliewiebe/oregon_wolverine_suitability.tif")
+
+oreg_no_neg <- oregon_wolverine_suitability %>% 
+  calc(fun = function(x) { ifelse(x < 0, 0, x) })
+
+oreg_no_zero <- calc(oreg_no_neg, function(x) { ifelse(x == 0, NA, x) })
+
+par(bty = "n")
+
+plot(oreg_no_neg, 
+     main = "Wolverine Habitat Suitability in Oregon", 
+     xaxt = "n", 
+     yaxt = "n", 
+     frame.plot = FALSE)
+
+mtext("Suitability Index *", side = 4, line = 0.25, cex = 0.9)
+
+
+hist(oreg_no_zero, main = "Histogram of Non-Zero Pixels in Oregon", 
+     xlab = "Suitability Index *", col = "lightblue")
+```
+
+```{r}
+oreg_ideal <- calc(oreg_no_neg, function(x) { ifelse(x < 0.132, 0, 1) })
+
+par(bty = "n")
+
+plot(oreg_ideal, 
+     main = "Ideal Wolverine Habitat in Oregon", 
+     xaxt = "n", 
+     yaxt = "n", 
+     frame.plot = FALSE, 
+     legend = FALSE)
+
+legend(x = "left", 
+       inset = c(0, 0), 
+       legend = c("Suitable habitat", "Not suitable"),
+       fill = c("#13941e", "#ebedeb"),
+       border = NA,
+       cex = 0.8)
+
+count_ones <- sum(values(oreg_ideal) == 1, na.rm = TRUE)
+count_ones
+
+total_pixels <- ncell(oreg_ideal)
+
+count_ones/total_pixels
+# 12.3% of Oregon is suitable for wolverines...
+
+98466 * (count_ones/total_pixels)
+# ... which equals 12,154.68 square miles
+
+
+montana_obs_only <- montana_final %>%
+  filter(obs_binary == 1)
+
+200 / 731
+# Montana is 27.4% suitable for wolverines
+
+147040 * (200 / 731)
+# Which equals 40,229.82 square miles
+
+# Create the dataset
+habitat_data <- data.frame(
+  State = c("Oregon", "Montana"),
+  Habitat_Area = c(12154.68, 40229.82)  # Habitat area in square miles
+)
+
+ggplot(habitat_data, aes(x = State, y = Habitat_Area, fill = State)) + 
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Ideal Habitat Area",
+    subtitle = "Wolverines might prefer Montana",
+    y = "Wolverine Habitat Area (mi²)",
+    x = "State"
+  ) + 
+  scale_fill_manual(values = c("Oregon" = "#002A86", "Montana" = "#a81800")) + 
+  theme_minimal() + 
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, hjust = 0.5),
+    panel.grid = element_blank(),
+    legend.position = "none"
+  )
+
+```
+
+
+
