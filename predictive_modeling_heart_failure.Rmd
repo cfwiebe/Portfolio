@@ -1,0 +1,300 @@
+PREDICTIVE MODELING OF HEART FAILURE
+```{r}
+# Data found on Kaggle: https://www.kaggle.com/datasets/fedesoriano/heart-failure-prediction?resource=download
+heart <- read.csv("https://raw.githubusercontent.com/cfwiebe/datasets/refs/heads/main/heart.csv")
+```
+
+```{r}
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) }
+heart$MaxHRNorm <- normalize(heart$MaxHR)
+min(heart$MaxHRNorm)
+```
+
+```{r}
+max(heart$MaxHRNorm)
+```
+
+```{r}
+library(dplyr)
+heartKnn <- dplyr::select(heart, MaxHRNorm, ExerciseAngina, HeartDisease)
+heartKnn$ExerciseAngina <- as.factor(heartKnn$ExerciseAngina)
+str(heartKnn)
+```
+
+```{r}
+# STRATIFIED SPLITTING FOR TRAINING & TESTING SETS
+## PARTITION DATA
+heart0<-heartKnn%>%
+filter(HeartDisease==0)
+dim(heart0)
+
+heart1<-heartKnn%>%
+filter(HeartDisease==1)
+dim(heart1)
+```
+
+```{r}
+## SAMPLE INDICES
+set.seed(100)
+heart_sample0<-sample(1:410, 287)
+heart_sample1<-sample(1:508, 356)
+## TRAINING AND TESTING SETS
+trainStrat<-rbind(heart0[heart_sample0, ],
+heart1[heart_sample1, ])
+testStrat<-rbind(heart0[-heart_sample0, ],
+heart1[-heart_sample1, ])
+
+## CHECKING FOR DIFFERENCES IN PROPORITON OF OUTCOME
+mean(trainStrat$HeartDisease)
+
+mean(testStrat$HeartDisease)
+```
+
+K-NEAREST NEIGHBORS
+```{r}
+library(class)
+
+### Specify Arguments
+trainFea<-trainStrat%>%
+  dplyr::select(-HeartDisease)
+testFea<-testStrat%>%
+  dplyr::select(-HeartDisease)
+trainOut<-trainStrat$HeartDisease
+testOut<-testStrat$HeartDisease
+trainFea$ExerciseAngina <- as.numeric(trainFea$ExerciseAngina) - 1
+testFea$ExerciseAngina <- as.numeric(testFea$ExerciseAngina) - 1
+
+set.seed(1234)
+knn.heartPred=knn(train = trainFea, test = testFea, cl = trainOut, k=3)
+```
+
+```{r}
+# CONFUSION MATRIX
+cmHeart<-table(knn.heartPred,testOut)
+cmHeart
+
+# CORRECT RATE
+mean(knn.heartPred==testOut)
+
+# ERROR RATE
+1-mean(knn.heartPred==testOut)
+
+# False Positive Rate: 36/275 = 13.1%
+# False Negatives: 46/275 = 16.7%
+# SENSITIVITY:
+### Sensitivity = True Positive / (True Positive + False Negative)
+### cm: 1=TN 2=FP 3=FN 4=TP
+cmHeart[4]/(cmHeart[4] + cmHeart[3])
+
+# SPECIFICITY
+### Specificity = True Negative / (False Positive + True Negative)
+cmHeart[1]/(cmHeart[2] + cmHeart[1])
+```
+```{r}
+# Grid Search for Best "K"
+set.seed(123)
+error <- c()
+for (i in 1:30) {
+  knnHeart<- knn(train = trainFea,
+  test = testFea,
+  cl = trainOut,
+  k = i)
+
+error[i] = 1- mean(knnHeart==testOut)
+}
+ggplot(data = data.frame(error), aes(x = 1:30, y = error)) +
+geom_line(color = "Blue")+
+xlab("Neighborhood Size")
+
+which.min(error)
+# The best model will contain 11 neighbors.
+```
+```{r}
+# Fitting the Best Model
+set.seed(1234)
+knn.heartPredFinal=knn(train = trainFea,
+  test = testFea,
+  cl = trainOut,
+  k=11)
+```
+
+```{r}
+# CONFUSION MATRIX
+knnFinalCM<-table(knn.heartPredFinal,testOut)
+knnFinalCM
+
+# CORRECT RATE
+knnFinalCR <- mean(knn.heartPredFinal==testOut)
+knnFinalCR
+
+#73.8% Correct Rate - Increased from 70.2%
+# ERROR RATE
+1-mean(knn.heartPredFinal==testOut)
+
+# 26.1% Error Rate - Decreased from 29.8%
+# False Positive Rate: 24/275 = 8.7% (decreased from 13.1%)
+# False Negative Rate: 48/275 = 17.5% (increased from 16.7%)
+# SENSITIVITY
+### Sensitivity = True Positive / (True Positive + False Negative)
+### cm: 1=TN 2=FP 3=FN 4=TP
+knnFinalCM[4]/(knnFinalCM[4] + knnFinalCM[3])
+
+# SPECIFICITY
+### Specificity = True Negative / (False Positive + True Negative)
+knnFinalCM[1]/(knnFinalCM[2] + knnFinalCM[1])
+```
+SIMPLE LOGISTIC REGRESSION
+```{r}
+library(caret)
+# Split the data into training and test set
+set.seed(314)
+caretSamp <- createDataPartition(heart$HeartDisease ,
+p = 0.7,
+list = FALSE)
+
+## SPLIT TESTING AND TRAINING
+trainLR <- heart[caretSamp, ]
+testLR <- heart[-caretSamp, ]
+```
+
+```{r}
+modLR <- glm(HeartDisease ~ Cholesterol, data=trainLR, family="binomial")
+summary(modLR)
+
+slope <- modLR$coefficients[2]
+exp(slope)
+
+ggplot(data=trainLR, aes(x=Cholesterol, fill=factor(HeartDisease)))+
+geom_density(alpha=.5)
+
+ggplot(data=trainLR, aes(x=Cholesterol, y=HeartDisease))+
+geom_point()+
+geom_line(aes(x = Cholesterol, y = modLR$fitted), color="blue")
+```
+
+Confusion Matrix at 0.5 Threshold
+```{r}
+pred1R<-predict(modLR, newdata = testLR, type="response")
+head(pred1R)
+
+conf_mat<-data.frame(testHeartDisease=testLR$HeartDisease, predHeart=pred1R>.5)
+table(conf_mat$predHeart, conf_mat$testHeartDisease)
+
+# CORRECT RATE
+mean(conf_mat$predHeart == conf_mat$testHeartDisease)
+```
+
+MULTIPLE LOGISTIC REGRESSION
+```{r}
+modMulti<-glm(HeartDisease ~.,
+
+data = trainLR, family = "binomial")
+
+summary(modMulti)
+
+# STEPWISE VARIABLE SELECTION
+#install.packages("bestglm")
+library(bestglm)
+step(modMulti)
+
+# FINAL MODEL
+lmfinal <- glm(HeartDisease ~ Age + Sex + ChestPainType + Cholesterol + FastingBS + ExerciseAngina + Oldpeak + ST_Slope, data = trainLR, family="binomial")
+predfinal<-predict(lmfinal, newdata = testLR, type="response")
+head(predfinal)
+```
+
+```{r}
+# CONFUSION MATRIX
+conf_mat_final<-data.frame(testHeartDisease=testLR$HeartDisease, predHeart=predfinal>.5)
+mlrFinalCm <- table(conf_mat_final$predHeart, conf_mat_final$testHeartDisease)
+mlrFinalCm
+
+# CORRECT RATE
+mlgFinalCR <- mean(conf_mat_final$predHeart==conf_mat_final$testHeartDisease)
+mlgFinalCR
+```
+DECISION TREES
+```{r}
+heart$HeartDisease <- as.factor(heart$HeartDisease)
+str(heart)
+```
+
+```{r}
+library(caret)
+## Split the data into training and testings sets
+set.seed(3)
+caretSamp <- createDataPartition(heart$HeartDisease,
+p = 0.7,
+list = FALSE)
+
+train <- heart[caretSamp, ]
+test<- heart[-caretSamp, ]
+```
+
+```{r}
+# Fitting Classification Trees and observing patterns
+set.seed(3)
+library(rpart)
+classTree<- rpart(HeartDisease ~., data = train, method = "class")
+## Plot Tree
+library(rpart.plot)
+rpart.plot(classTree)
+
+plotcp(classTree)
+
+printcp(classTree)
+
+## Best CP
+minCP<-classTree$cptable[which.min(classTree$cptable[,"xerror"]),"CP"]
+```
+
+```{r}
+# Step 14 - Finding best CP and replotting tree:
+  
+library(rpart.plot)
+prune_classTree <- prune(classTree, cp = minCP)
+rpart.plot(prune_classTree)
+```
+
+```{r}
+predTree1<-predict(prune_classTree, test, type = "class")
+
+# CONFUSION MATRIX
+cmTree1<-table(test$HeartDisease, predTree1)
+cmTree1
+
+# CORRECT RATE
+mean(test$HeartDisease == predTree1)
+```
+```{r}
+# TREE AGGREGATION USING BAGGING
+library(tidyverse)
+### BAG
+set.seed(3)
+caretBag <- train(HeartDisease ~.,
+data = train,
+method = "treebag",
+trControl = trainControl("cv", number = 10),
+importance = TRUE)
+
+predCaretBag <- caretBag %>% predict(test)
+
+caretBag$finalModel
+```
+
+```{r}
+# TESTING
+#install.packages("vip")
+library(vip)
+# TESTING FOR IMPORTANCE
+vip(caretBag)
+
+# CONFUSION MATRIX
+treeFinalCm <- table(predCaretBag, test$HeartDisease)
+treeFinalCm
+
+# CORRECT RATE
+treeFinalCR <- mean(predCaretBag == test$HeartDisease)
+treeFinalCR
+```
